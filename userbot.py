@@ -1,45 +1,60 @@
-from telethon import TelegramClient, events, Button
 import os
 import logging
+import random
+from telethon import TelegramClient, events, Button
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+api_id = os.getenv('TELEGRAM_API_ID')
+api_hash = os.getenv('TELEGRAM_API_HASH')
+if not api_id or not api_hash:
+    raise ValueError("Please set TELEGRAM_API_ID and TELEGRAM_API_HASH in .env file.")
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize Telethon client (replace with your API ID, API hash, and session)
-api_id = YOUR_API_ID  # Replace with your API ID
-api_hash = 'YOUR_API_HASH'  # Replace with your API hash
-client = TelegramClient('userbot_session', api_id, api_hash)
+# Initialize Telethon client
+client = TelegramClient('userbot_session', int(api_id), api_hash)
 
-# Dictionary to store alive media (in-memory for simplicity; use a database for persistence)
+# Dictionary to store alive media (in-memory; use SQLite for persistence)
 alive_media = {'type': None, 'file': None, 'text': None}
 
 # Helper function to download media or code
 async def download_media(message):
-    if message.media and hasattr(message.media, 'document'):
+    if not message or not message.media:
+        return None, None
+    # Check file size (limit to 10MB for safety)
+    if hasattr(message.media, 'document') and message.media.document.size > 10 * 1024 * 1024:
+        return None, None
+    if message.photo:
+        file_path = await message.download_media()
+        return 'media', file_path
+    if hasattr(message.media, 'document'):
         mime_type = message.media.document.mime_type
         if mime_type in ['image/jpeg', 'image/png', 'video/mp4']:
             file_path = await message.download_media()
             return 'media', file_path
-        elif mime_type == 'text/x-python' or message.file.name.endswith('.py'):
+        elif mime_type == 'text/x-python' or (message.file and message.file.name.endswith('.py')):
             file_path = await message.download_media()
             with open(file_path, 'r') as f:
                 code = f.read()
+            os.remove(file_path)  # Clean up
             return 'code', code
-    elif message.photo:
-        file_path = await message.download_media()
-        return 'media', file_path
     return None, None
 
 # .ping command
-@client.on(events.NewMessage(pattern=r'\.ping'))
+@client.on(events.NewMessage(pattern=r'\.ping', outgoing=True))
 async def ping(event):
+    logger.info("Ping command triggered")
     await event.reply("Pong! 🏓")
 
 # .setalive command
-@client.on(events.NewMessage(pattern=r'\.setalive'))
+@client.on(events.NewMessage(pattern=r'\.setalive', outgoing=True))
 async def set_alive(event):
     global alive_media
+    logger.info("Setalive command triggered")
     reply = await event.get_reply_message()
     if not reply:
         await event.reply("Please reply to a photo, video, or Python code to set as alive media.")
@@ -53,11 +68,12 @@ async def set_alive(event):
         alive_media = {'type': 'code', 'file': None, 'text': content}
         await event.reply("Alive media set to Python code successfully!")
     else:
-        await event.reply("Unsupported media type. Reply to a photo, video, or .py file.")
+        await event.reply("Unsupported media type or file too large. Reply to a photo, video, or .py file (max 10MB).")
 
 # .alive command
-@client.on(events.NewMessage(pattern=r'\.alive'))
+@client.on(events.NewMessage(pattern=r'\.alive', outgoing=True))
 async def alive(event):
+    logger.info("Alive command triggered")
     if alive_media['type'] == 'media' and alive_media['file']:
         await event.reply(file=alive_media['file'], message="Userbot is alive! 🚀")
     elif alive_media['type'] == 'code' and alive_media['text']:
@@ -66,22 +82,23 @@ async def alive(event):
         await event.reply("Userbot is alive! 🚀 No custom media set.")
 
 # .afk command
-@client.on(events.NewMessage(pattern=r'\.afk(?:\s+(.+))?'))
+@client.on(events.NewMessage(pattern=r'\.afk(?:\s+(.+))?', outgoing=True))
 async def afk(event):
+    logger.info("AFK command triggered")
     reason = event.pattern_match.group(1) or "No reason provided."
-    # Store AFK status (implement storage logic as needed)
     await event.reply(f"Going AFK with reason: {reason}")
-    # Add logic to auto-reply to mentions or PMs (not implemented here for brevity)
+    # Add auto-reply logic here
 
 # .unafk command
-@client.on(events.NewMessage(pattern=r'\.unafk'))
+@client.on(events.NewMessage(pattern=r'\.unafk', outgoing=True))
 async def unafk(event):
-    # Clear AFK status (implement storage logic as needed)
+    logger.info("Unafk command triggered")
     await event.reply("Back from AFK!")
 
 # .id command
-@client.on(events.NewMessage(pattern=r'\.id'))
+@client.on(events.NewMessage(pattern=r'\.id', outgoing=True))
 async def get_id(event):
+    logger.info("ID command triggered")
     chat = await event.get_chat()
     reply = await event.get_reply_message()
     if reply:
@@ -91,8 +108,9 @@ async def get_id(event):
         await event.reply(f"Chat ID: {chat.id}")
 
 # .kick command (admin only)
-@client.on(events.NewMessage(pattern=r'\.kick'))
+@client.on(events.NewMessage(pattern=r'\.kick', outgoing=True))
 async def kick(event):
+    logger.info("Kick command triggered")
     if not event.is_group:
         await event.reply("This command works in groups only.")
         return
@@ -100,12 +118,12 @@ async def kick(event):
     if not reply:
         await event.reply("Reply to a user to kick them.")
         return
-    # Add admin check and kick logic
-    await event.reply("Kicking user... (admin check needed)")
+    await event.reply("Kicking user... (add admin check and logic)")
 
 # .ban command (admin only)
-@client.on(events.NewMessage(pattern=r'\.ban'))
+@client.on(events.NewMessage(pattern=r'\.ban', outgoing=True))
 async def ban(event):
+    logger.info("Ban command triggered")
     if not event.is_group:
         await event.reply("This command works in groups only.")
         return
@@ -113,12 +131,12 @@ async def ban(event):
     if not reply:
         await event.reply("Reply to a user to ban them.")
         return
-    # Add admin check and ban logic
-    await event.reply("Banning user... (admin check needed)")
+    await event.reply("Banning user... (add admin check and logic)")
 
 # .unban command (admin only)
-@client.on(events.NewMessage(pattern=r'\.unban'))
+@client.on(events.NewMessage(pattern=r'\.unban', outgoing=True))
 async def unban(event):
+    logger.info("Unban command triggered")
     if not event.is_group:
         await event.reply("This command works in groups only.")
         return
@@ -126,12 +144,12 @@ async def unban(event):
     if not reply:
         await event.reply("Reply to a user to unban them.")
         return
-    # Add admin check and unban logic
-    await event.reply("Unbanning user... (admin check needed)")
+    await event.reply("Unbanning user... (add admin check and logic)")
 
 # .mute command (admin only)
-@client.on(events.NewMessage(pattern=r'\.mute'))
+@client.on(events.NewMessage(pattern=r'\.mute', outgoing=True))
 async def mute(event):
+    logger.info("Mute command triggered")
     if not event.is_group:
         await event.reply("This command works in groups only.")
         return
@@ -139,12 +157,12 @@ async def mute(event):
     if not reply:
         await event.reply("Reply to a user to mute them.")
         return
-    # Add admin check and mute logic
-    await event.reply("Muting user... (admin check needed)")
+    await event.reply("Muting user... (add admin check and logic)")
 
 # .unmute command (admin only)
-@client.on(events.NewMessage(pattern=r'\.unmute'))
+@client.on(events.NewMessage(pattern=r'\.unmute', outgoing=True))
 async def unmute(event):
+    logger.info("Unmute command triggered")
     if not event.is_group:
         await event.reply("This command works in groups only.")
         return
@@ -152,42 +170,44 @@ async def unmute(event):
     if not reply:
         await event.reply("Reply to a user to unmute them.")
         return
-    # Add admin check and unmute logic
-    await event.reply("Unmuting user... (admin check needed)")
+    await event.reply("Unmuting user... (add admin check and logic)")
 
 # .roll command
-@client.on(events.NewMessage(pattern=r'\.roll'))
+@client.on(events.NewMessage(pattern=r'\.roll', outgoing=True))
 async def roll(event):
-    import random
+    logger.info("Roll command triggered")
     await event.reply(f"🎲 Rolled: {random.randint(1, 6)}")
 
 # .purge command (admin only)
-@client.on(events.NewMessage(pattern=r'\.purge'))
+@client.on(events.NewMessage(pattern=r'\.purge', outgoing=True))
 async def purge(event):
+    logger.info("Purge command triggered")
     reply = await event.get_reply_message()
     if not reply:
         await event.reply("Reply to a message to start purging from there.")
         return
-    # Add admin check and purge logic
-    await event.reply("Purging messages... (admin check needed)")
+    await event.reply("Purging messages... (add admin check and logic)")
 
 # .setbio command
-@client.on(events.NewMessage(pattern=r'\.setbio\s+(.+)'))
+@client.on(events.NewMessage(pattern=r'\.setbio\s+(.+)', outgoing=True))
 async def set_bio(event):
+    logger.info("Setbio command triggered")
     bio = event.pattern_match.group(1)
-    # Update bio using client.update_profile
     await event.reply(f"Bio set to: {bio}")
+    # Add client.update_profile logic
 
 # .setname command
-@client.on(events.NewMessage(pattern=r'\.setname\s+(.+)'))
+@client.on(events.NewMessage(pattern=r'\.setname\s+(.+)', outgoing=True))
 async def set_name(event):
+    logger.info("Setname command triggered")
     name = event.pattern_match.group(1)
-    # Update name using client.update_profile
     await event.reply(f"Name set to: {name}")
+    # Add client.update_profile logic
 
 # .commands command
-@client.on(events.NewMessage(pattern=r'\.commands'))
+@client.on(events.NewMessage(pattern=r'\.commands', outgoing=True))
 async def commands(event):
+    logger.info("Commands command triggered")
     buttons = [
         [Button.inline(".ping", b"cmd_ping"), Button.inline(".alive", b"cmd_alive")],
         [Button.inline(".setalive", b"cmd_setalive"), Button.inline(".afk", b"cmd_afk")],
@@ -220,9 +240,18 @@ async def callback(event):
         b"cmd_setbio": "Sets a new Telegram bio.",
         b"cmd_setname": "Sets a new Telegram display name.",
     }
-    data = event.data
-    if data in cmd_descriptions:
-        await event.answer(cmd_descriptions[data], alert=True)
+    try:
+        if event.sender_id != (await event.get_input_sender()).user_id:
+            await event.answer("This button is not for you!", alert=True)
+            return
+        data = event.data
+        if data in cmd_descriptions:
+            await event.answer(cmd_descriptions[data], alert=True)
+        else:
+            await event.answer("Unknown command!", alert=True)
+    except Exception as e:
+        logger.error(f"Callback error: {e}")
+        await event.answer("An error occurred!", alert=True)
 
 # Start the client
 async def main():
