@@ -9,7 +9,7 @@ load_dotenv()
 api_id = os.getenv('TELEGRAM_API_ID')
 api_hash = os.getenv('TELEGRAM_API_HASH')
 if not api_id or not api_hash:
-    raise ValueError("Please set TELEGRAM_API_ID and TELEGRAM_API_HASH in .env file.")
+    raise ValueError("TELEGRAM_API_ID and TELEGRAM_API_HASH must be set in .env file. Create one with your credentials from my.telegram.org.")
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -18,14 +18,14 @@ logger = logging.getLogger(__name__)
 # Initialize Telethon client
 client = TelegramClient('userbot_session', int(api_id), api_hash)
 
-# Dictionary to store alive media (in-memory; use SQLite for persistence)
+# Dictionary to store alive media (in-memory; for persistence, use JSON/SQLite)
 alive_media = {'type': None, 'file': None, 'text': None}
 
 # Helper function to download media or code
 async def download_media(message):
     if not message or not message.media:
         return None, None
-    # Check file size (limit to 10MB for safety)
+    # Limit file size to 10MB
     if hasattr(message.media, 'document') and message.media.document.size > 10 * 1024 * 1024:
         return None, None
     if message.photo:
@@ -38,10 +38,12 @@ async def download_media(message):
             return 'media', file_path
         elif mime_type == 'text/x-python' or (message.file and message.file.name.endswith('.py')):
             file_path = await message.download_media()
-            with open(file_path, 'r') as f:
-                code = f.read()
-            os.remove(file_path)  # Clean up
-            return 'code', code
+            try:
+                with open(file_path, 'r') as f:
+                    code = f.read()
+                return 'code', code
+            finally:
+                os.remove(file_path)  # Clean up
     return None, None
 
 # .ping command
@@ -59,6 +61,10 @@ async def set_alive(event):
     if not reply:
         await event.reply("Please reply to a photo, video, or Python code to set as alive media.")
         return
+
+    # Clean up previous media file if it exists
+    if alive_media['type'] == 'media' and alive_media['file'] and os.path.exists(alive_media['file']):
+        os.remove(alive_media['file'])
 
     media_type, content = await download_media(reply)
     if media_type == 'media':
